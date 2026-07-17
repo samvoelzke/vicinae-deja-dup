@@ -6,7 +6,7 @@
   "categories": ["System"],
   "license": "MIT",
   "platforms": ["Linux"],
-  "author": "voelzke",
+  "author": "samvoelzke",
   "contributors": [],
   "icon": "extension_icon.png",
   "commands": [
