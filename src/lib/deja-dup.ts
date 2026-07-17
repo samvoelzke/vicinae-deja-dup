@@ -1,0 +1,489 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { environment, getPreferenceValues } from "@vicinae/api";
+
+const execFileP = promisify(execFile);
+
+/** Déjà Dup's own registered Google OAuth client (from libdeja). Client-id only, no secret. */
+const GOOGLE_CLIENT_ID =
+  "916137916439-evn6skqan91m96fmsskk8102e3iepv22.apps.googleusercontent.com";
+const GOOGLE_TOKEN_URL = "https://www.googleapis.com/oauth2/v4/token";
+
+export interface Preferences {
+  resticPath: string;
+  rclonePath: string;
+  cacheDir: string;
+}
+
+export function prefs(): Preferences {
+  const p = getPreferenceValues<Preferences>();
+  return {
+    resticPath: p.resticPath?.trim() || "restic",
+    rclonePath: p.rclonePath?.trim() || "rclone",
+    cacheDir: p.cacheDir?.trim() || join(homedir(), ".cache", "deja-dup", "restic"),
+  };
+}
+
+/** Thrown when the backup exists but this extension cannot read it (e.g. duplicity). */
+export class UnsupportedError extends Error {}
+
+export type Backend = string;
+
+export interface DejaConfig {
+  backend: Backend;
+  tool: string;
+  /** Backend-specific target folder / path. */
+  folder: string;
+  /** rclone remote name (only for the "rclone" backend). */
+  rcloneRemote?: string;
+}
+
+function gsettings(schema: string, key: string): Promise<string> {
+  return execFileP("gsettings", ["get", schema, key])
+    .then((r) => r.stdout.trim().replace(/^'(.*)'$/, "$1"))
+    .catch(() => "");
+}
+
+/** Read Déjà Dup's current backend + tool + target from GSettings. */
+export async function readConfig(): Promise<DejaConfig> {
+  const backend = await gsettings("org.gnome.DejaDup", "backend");
+  if (!backend) {
+    throw new UnsupportedError(
+      "Déjà Dup does not appear to be configured (no backend found in GSettings).",
+    );
+  }
+  const tool = await gsettings("org.gnome.DejaDup", "tool");
+
+  // Déjà Dup 45+ defaults to restic. Only "duplicity"/"borg" produce repos restic cannot read.
+  if (tool === "duplicity" || tool === "borg") {
+    throw new UnsupportedError(
+      `This backup uses "${tool}", which this extension cannot read. Only restic backups are supported.`,
+    );
+  }
+
+  let folder = "";
+  let rcloneRemote: string | undefined;
+  switch (backend) {
+    case "google":
+      folder = await gsettings("org.gnome.DejaDup.Google", "folder");
+      break;
+    case "microsoft":
+      folder = await gsettings("org.gnome.DejaDup.Microsoft", "folder");
+      break;
+    case "local":
+    case "file":
+      folder = await gsettings("org.gnome.DejaDup.Local", "folder");
+      break;
+    case "rclone":
+      folder = await gsettings("org.gnome.DejaDup.Rclone", "folder");
+      rcloneRemote = await gsettings("org.gnome.DejaDup.Rclone", "remote");
+      break;
+    default:
+      // remote, drive, s3, gcs, ... — resolvable in principle, not yet wired up.
+      break;
+  }
+
+  return { backend, tool, folder: expandHome(folder), rcloneRemote };
+}
+
+function expandHome(p: string): string {
+  if (p === "$HOME") return homedir();
+  if (p.startsWith("$HOME/")) return join(homedir(), p.slice(6));
+  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+  return p;
+}
+
+/** Look up a secret by attribute pairs via `secret-tool`. Returns "" if not found. */
+async function secretLookup(attrs: string[]): Promise<string> {
+  try {
+    const { stdout } = await execFileP("secret-tool", ["lookup", ...attrs], {
+      maxBuffer: 1024 * 1024,
+    });
+    // secret-tool does not append a trailing newline; trim only a single one defensively.
+    return stdout.replace(/\n$/, "");
+  } catch {
+    return "";
+  }
+}
+
+/** The restic repository passphrase (Déjà Dup "Backup encryption password"). */
+export async function getPassphrase(): Promise<string> {
+  const pass = await secretLookup(["owner", "deja-dup", "type", "passphrase"]);
+  if (!pass) {
+    throw new UnsupportedError(
+      "Could not find the backup password in the keyring. Open Déjà Dup once to unlock it, then try again.",
+    );
+  }
+  return pass;
+}
+
+interface CachedToken {
+  access_token: string;
+  /** Epoch milliseconds when the token expires. */
+  expires_at: number;
+}
+
+async function tokenCachePath(name: string): Promise<string> {
+  const dir = environment.supportPath;
+  await mkdir(dir, { recursive: true });
+  return join(dir, `${name}-token.json`);
+}
+
+/**
+ * Exchange Déjà Dup's stored Google refresh token for a fresh access token,
+ * caching it in the extension support dir until shortly before it expires.
+ */
+async function getGoogleAccessToken(): Promise<{ token: string; expiry: string }> {
+  const cachePath = await tokenCachePath("google");
+  const now = Date.now();
+
+  try {
+    const cached: CachedToken = JSON.parse(await readFile(cachePath, "utf8"));
+    if (cached.access_token && cached.expires_at - 60_000 > now) {
+      return { token: cached.access_token, expiry: new Date(cached.expires_at).toISOString() };
+    }
+  } catch {
+    // no / invalid cache — fall through to refresh
+  }
+
+  const refresh =
+    (await secretLookup([
+      "xdg:schema",
+      "org.gnome.DejaDup.Google",
+      "client_id",
+      GOOGLE_CLIENT_ID,
+    ])) || (await secretLookup(["client_id", GOOGLE_CLIENT_ID]));
+
+  if (!refresh) {
+    throw new UnsupportedError(
+      "Could not find the Google Drive token in the keyring. Open Déjà Dup once to reconnect the account, then try again.",
+    );
+  }
+
+  const body = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    refresh_token: refresh,
+    grant_type: "refresh_token",
+  });
+  const res = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!res.ok) {
+    throw new Error(`Google token refresh failed (HTTP ${res.status}). Re-authorise Déjà Dup.`);
+  }
+  const data = (await res.json()) as { access_token?: string; expires_in?: number };
+  if (!data.access_token) {
+    throw new Error("Google token refresh returned no access token.");
+  }
+  const expiresAt = now + (data.expires_in ?? 3600) * 1000;
+  const cached: CachedToken = { access_token: data.access_token, expires_at: expiresAt };
+  await writeFile(cachePath, JSON.stringify(cached), { mode: 0o600 });
+
+  return { token: data.access_token, expiry: new Date(expiresAt).toISOString() };
+}
+
+export interface ResolvedRepo {
+  repoUrl: string;
+  env: NodeJS.ProcessEnv;
+}
+
+/** Build the restic repo URL and the environment needed to reach it for the given backend. */
+export async function resolveRepo(config: DejaConfig): Promise<ResolvedRepo> {
+  const passphrase = await getPassphrase();
+  const env: NodeJS.ProcessEnv = { RESTIC_PASSWORD: passphrase };
+
+  switch (config.backend) {
+    case "local":
+    case "file":
+      if (!config.folder) throw new UnsupportedError("Local backup folder is not configured.");
+      return { repoUrl: config.folder, env };
+
+    case "google": {
+      const { token, expiry } = await getGoogleAccessToken();
+      env.RCLONE_DRIVE_CLIENT_ID = GOOGLE_CLIENT_ID;
+      env.RCLONE_DRIVE_SCOPE = "drive.file";
+      env.RCLONE_DRIVE_USE_TRASH = "false";
+      env.RCLONE_CONFIG = "";
+      env.RCLONE_DRIVE_TOKEN = JSON.stringify({
+        access_token: token,
+        token_type: "Bearer",
+        expiry,
+      });
+      return { repoUrl: `rclone::drive:${config.folder}`, env };
+    }
+
+    case "rclone": {
+      if (!config.rcloneRemote) throw new UnsupportedError("rclone remote is not configured.");
+      const pass = await secretLookup([
+        "xdg:schema",
+        "org.gnome.DejaDup.Rclone",
+        "type",
+        "password",
+      ]);
+      if (pass) env.RCLONE_CONFIG_PASS = pass;
+      return { repoUrl: `rclone::${config.rcloneRemote}:${config.folder}`, env };
+    }
+
+    default:
+      throw new UnsupportedError(
+        `The "${config.backend}" backend is not supported yet. Local, Google Drive and rclone backups work today.`,
+      );
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * restic invocation
+ * ------------------------------------------------------------------------- */
+
+export interface Snapshot {
+  id: string;
+  short_id: string;
+  time: string;
+  hostname: string;
+  username: string;
+  paths: string[];
+  tags?: string[];
+  summary?: {
+    total_files_processed?: number;
+    total_bytes_processed?: number;
+  };
+}
+
+export interface ResticNode {
+  name: string;
+  type: "file" | "dir" | "symlink" | string;
+  path: string;
+  size?: number;
+  mode?: number;
+  mtime?: string;
+  uid?: number;
+  gid?: number;
+}
+
+function humanExit(code: number | null, stderr: string): string {
+  switch (code) {
+    case 10:
+      return "Backup repository not found or unreachable.";
+    case 11:
+      return "Repository is locked by another operation.";
+    case 12:
+      return "Wrong backup password.";
+    case 130:
+      return "Cancelled.";
+    default:
+      return stderr.trim().split("\n").slice(-3).join("\n") || `restic exited with code ${code}.`;
+  }
+}
+
+async function buildEnvAndBase(config?: DejaConfig): Promise<{
+  repoUrl: string;
+  env: NodeJS.ProcessEnv;
+  base: string[];
+}> {
+  const cfg = config ?? (await readConfig());
+  const { repoUrl, env } = await resolveRepo(cfg);
+  const p = prefs();
+  const base = [
+    "--repo",
+    repoUrl,
+    "--no-lock",
+    "--cache-dir",
+    p.cacheDir,
+    "--option",
+    `rclone.program=${p.rclonePath}`,
+  ];
+  return { repoUrl, env: { ...process.env, ...env }, base };
+}
+
+/** Run a restic subcommand, returning stdout. Throws a human-readable Error on failure. */
+export async function restic(args: string[], config?: DejaConfig): Promise<string> {
+  const p = prefs();
+  const { env, base } = await buildEnvAndBase(config);
+  try {
+    const { stdout } = await execFileP(p.resticPath, [...base, ...args], {
+      env,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return stdout;
+  } catch (err) {
+    const e = err as { code?: number; stderr?: string };
+    // Exit code 3 = could not read some source files; output is still valid.
+    if (e.code === 3 && typeof (err as { stdout?: string }).stdout === "string") {
+      return (err as { stdout: string }).stdout;
+    }
+    throw new Error(humanExit(e.code ?? null, e.stderr ?? ""));
+  }
+}
+
+export async function listSnapshots(config?: DejaConfig): Promise<Snapshot[]> {
+  const out = await restic(["snapshots", "--json"], config);
+  const arr = JSON.parse(out || "[]") as Snapshot[];
+  return arr.sort((a, b) => (a.time < b.time ? 1 : -1));
+}
+
+/**
+ * List one directory level inside a snapshot. `restic ls` emits NDJSON: the first
+ * line is the snapshot object, the rest are nodes. Without `--recursive` and with an
+ * explicit directory path, restic returns only that subtree's direct children (plus the
+ * ancestor dirs it traverses, which we filter out). Passing no path would list the ENTIRE
+ * snapshot recursively — for a large home dir that is hundreds of MB, so always pass one.
+ */
+export async function listDir(
+  snapshotId: string,
+  path: string,
+  config?: DejaConfig,
+): Promise<ResticNode[]> {
+  const dir = path && path !== "" ? path : "/";
+  const out = await restic(["ls", snapshotId, dir, "--json"], config);
+
+  const nodes: ResticNode[] = [];
+  const wanted = dir === "/" ? "" : dir.replace(/\/$/, "");
+  for (const line of out.split("\n")) {
+    if (!line.trim()) continue;
+    let obj: ResticNode & { struct_type?: string };
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!obj.path || obj.struct_type === "snapshot" || !obj.type) continue;
+    const parent = obj.path.slice(0, obj.path.lastIndexOf("/")) || "";
+    if (parent === wanted) nodes.push(obj);
+  }
+  nodes.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return nodes;
+}
+
+export interface FindMatch {
+  path: string;
+  name?: string;
+  type?: string;
+  size?: number;
+  mtime?: string;
+}
+
+export interface FindResult {
+  snapshot: string;
+  matches: FindMatch[];
+}
+
+export async function findFiles(pattern: string, config?: DejaConfig): Promise<FindResult[]> {
+  const out = await restic(["find", "--json", pattern], config);
+  return JSON.parse(out || "[]") as FindResult[];
+}
+
+/** Dump a single file's contents from a snapshot to a local path (for preview). */
+export async function dumpFile(
+  snapshotId: string,
+  path: string,
+  targetPath: string,
+  config?: DejaConfig,
+): Promise<void> {
+  const { env, base } = await buildEnvAndBase(config);
+  const p = prefs();
+  const { createWriteStream } = await import("node:fs");
+  const { spawn } = await import("node:child_process");
+  await new Promise<void>((resolve, reject) => {
+    const out = createWriteStream(targetPath, { mode: 0o600 });
+    const child = spawn(p.resticPath, [...base, "dump", snapshotId, path], { env });
+    let stderr = "";
+    child.stdout.pipe(out);
+    child.stderr.on("data", (d) => (stderr += d.toString()));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      out.close();
+      if (code === 0) resolve();
+      else reject(new Error(humanExit(code, stderr)));
+    });
+  });
+}
+
+/** Restore a single file/dir from a snapshot into targetDir. */
+export async function restorePath(
+  snapshotId: string,
+  path: string,
+  targetDir: string,
+  config?: DejaConfig,
+): Promise<void> {
+  await restic(
+    ["restore", snapshotId, "--target", targetDir, "--include", path],
+    config,
+  );
+}
+
+export interface RepoStats {
+  total_size?: number;
+  total_file_count?: number;
+  snapshots_count?: number;
+}
+
+export async function repoStats(config?: DejaConfig): Promise<RepoStats> {
+  try {
+    const out = await restic(["stats", "latest", "--json"], config);
+    return JSON.parse(out || "{}") as RepoStats;
+  } catch {
+    return {};
+  }
+}
+
+export interface BackupStatus {
+  backend: string;
+  tool: string;
+  folder: string;
+  lastBackup: string;
+  lastRun: string;
+  periodic: boolean;
+  periodicPeriod: string;
+  includeList: string[];
+  excludeList: string[];
+}
+
+function gsettingsList(schema: string, key: string): Promise<string[]> {
+  return execFileP("gsettings", ["get", schema, key])
+    .then((r) => {
+      const raw = r.stdout.trim();
+      // GVariant array of strings: ['a', 'b']
+      const m = raw.match(/'([^']*)'/g);
+      return m ? m.map((s) => s.slice(1, -1)) : [];
+    })
+    .catch(() => []);
+}
+
+/** Read a human-facing status summary straight from GSettings (no repo access needed). */
+export async function readStatus(): Promise<BackupStatus> {
+  const cfg = await readConfig();
+  const [lastBackup, lastRun, periodic, period, includeList, excludeList] = await Promise.all([
+    gsettings("org.gnome.DejaDup", "last-backup"),
+    gsettings("org.gnome.DejaDup", "last-run"),
+    gsettings("org.gnome.DejaDup", "periodic"),
+    gsettings("org.gnome.DejaDup", "periodic-period"),
+    gsettingsList("org.gnome.DejaDup", "include-list"),
+    gsettingsList("org.gnome.DejaDup", "exclude-list"),
+  ]);
+  return {
+    backend: cfg.backend,
+    tool: cfg.tool === "unset" ? "restic (auto)" : cfg.tool,
+    folder: cfg.rcloneRemote ? `${cfg.rcloneRemote}:${cfg.folder}` : cfg.folder,
+    lastBackup,
+    lastRun,
+    periodic: periodic === "true",
+    periodicPeriod: period,
+    includeList,
+    excludeList,
+  };
+}
+
+export function formatBytes(n?: number): string {
+  if (!n || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(n) / Math.log(1024));
+  return `${(n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}

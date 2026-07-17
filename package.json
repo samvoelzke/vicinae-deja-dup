@@ -1,0 +1,75 @@
+{
+  "$schema": "https://raw.githubusercontent.com/vicinaehq/vicinae/refs/heads/main/extra/schemas/extension.json",
+  "name": "deja-dup",
+  "title": "Déjà Dup Backups",
+  "description": "Browse, search and restore files from your Déjà Dup (restic) backups",
+  "categories": ["System"],
+  "license": "MIT",
+  "platforms": ["Linux"],
+  "author": "voelzke",
+  "contributors": [],
+  "icon": "extension_icon.png",
+  "commands": [
+    {
+      "name": "browse-backup",
+      "title": "Browse Backup",
+      "subtitle": "Déjà Dup",
+      "description": "Browse snapshots and restore individual files from your backup",
+      "mode": "view"
+    },
+    {
+      "name": "search-files",
+      "title": "Search Backup Files",
+      "subtitle": "Déjà Dup",
+      "description": "Search for files across your backup snapshots",
+      "mode": "view"
+    },
+    {
+      "name": "backup-status",
+      "title": "Backup Status",
+      "subtitle": "Déjà Dup",
+      "description": "Show backup status and trigger a new backup",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "resticPath",
+      "title": "restic Binary",
+      "description": "Path to the restic executable (leave as 'restic' to use PATH)",
+      "type": "textfield",
+      "required": false,
+      "default": "restic"
+    },
+    {
+      "name": "rclonePath",
+      "title": "rclone Binary",
+      "description": "Path to the rclone executable (leave as 'rclone' to use PATH)",
+      "type": "textfield",
+      "required": false,
+      "default": "rclone"
+    },
+    {
+      "name": "cacheDir",
+      "title": "restic Cache Directory",
+      "description": "Leave empty to reuse Déjà Dup's cache at ~/.cache/deja-dup/restic",
+      "type": "textfield",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "scripts": {
+    "build": "vici build",
+    "dev": "vici develop",
+    "lint": "vici lint"
+  },
+  "dependencies": {
+    "@vicinae/api": "^0.23.1",
+    "@raycast/utils": "^2.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.9.2"
+  }
+}
