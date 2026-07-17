@@ -27,7 +27,14 @@ import {
   restorePath,
 } from "./lib/deja-dup";
 import { useCached } from "./lib/cache";
-import { formatBytes, fullDate, recencyBucket, relativeTime, shortDateTime } from "./lib/format";
+import {
+  duration,
+  formatBytes,
+  fullDate,
+  recencyBucket,
+  relativeTime,
+  shortDateTime,
+} from "./lib/format";
 
 const BUCKET_ORDER = ["Today", "This Week", "This Month", "This Year", "Older"];
 
@@ -103,20 +110,34 @@ function SnapshotItem({ snapshot: s, config }: { snapshot: Snapshot; config: Dej
 
 function SnapshotDetail({ snapshot: s }: { snapshot: Snapshot }) {
   const M = List.Item.Detail.Metadata;
+  const sum = s.summary;
+  const dur = duration(sum?.backup_start, sum?.backup_end);
   return (
     <List.Item.Detail
       metadata={
         <M>
           <M.Label title="Snapshot" text={s.short_id} icon={{ source: Icon.Clock, tintColor: Color.Blue }} />
           <M.Label title="Taken" text={fullDate(s.time)} icon={Icon.Calendar} />
+          {dur && <M.Label title="Duration" text={dur} icon={Icon.Clock} />}
           <M.Label title="Host" text={s.hostname} icon={Icon.HardDrive} />
           <M.Label title="User" text={s.username} icon={Icon.Person} />
+          {s.program_version && <M.Label title="Engine" text={s.program_version} icon={Icon.Cog} />}
           <M.Separator />
-          {s.summary?.total_files_processed != null && (
-            <M.Label title="Files" text={s.summary.total_files_processed.toLocaleString()} icon={Icon.BlankDocument} />
+          {sum?.total_files_processed != null && (
+            <M.Label title="Files" text={sum.total_files_processed.toLocaleString()} icon={Icon.BlankDocument} />
           )}
-          {s.summary?.total_bytes_processed != null && (
-            <M.Label title="Size" text={formatBytes(s.summary.total_bytes_processed)} icon={Icon.Cloud} />
+          {sum?.total_bytes_processed != null && (
+            <M.Label title="Total Size" text={formatBytes(sum.total_bytes_processed)} icon={Icon.Cloud} />
+          )}
+          {sum?.data_added != null && sum.data_added > 0 && (
+            <M.Label title="New Data" text={formatBytes(sum.data_added)} icon={Icon.Upload} />
+          )}
+          {(sum?.files_new != null || sum?.files_changed != null) && (
+            <M.TagList title="Changes">
+              {sum?.files_new ? <M.TagList.Item text={`${sum.files_new.toLocaleString()} new`} color={Color.Green} /> : null}
+              {sum?.files_changed ? <M.TagList.Item text={`${sum.files_changed.toLocaleString()} changed`} color={Color.Orange} /> : null}
+              {sum?.files_unmodified ? <M.TagList.Item text={`${sum.files_unmodified.toLocaleString()} unchanged`} color={Color.SecondaryText} /> : null}
+            </M.TagList>
           )}
           <M.Separator />
           <M.TagList title="Paths">
@@ -131,6 +152,7 @@ function SnapshotDetail({ snapshot: s }: { snapshot: Snapshot }) {
               ))}
             </M.TagList>
           )}
+          <M.Label title="Full ID" text={s.id} />
         </M>
       }
     />

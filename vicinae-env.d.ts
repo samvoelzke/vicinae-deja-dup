@@ -29,7 +29,7 @@ declare namespace Preferences {
 		
 	}
 
-	/** Command: Backup Status */
+	/** Command: Back Up Now */
 	export type BackupStatus = ExtensionPreferences & {
 		
 	}
@@ -46,7 +46,7 @@ declare namespace Arguments {
 		
 	}
 
-	/** Command: Backup Status */
+	/** Command: Back Up Now */
 	export type BackupStatus = {
 		
 	}

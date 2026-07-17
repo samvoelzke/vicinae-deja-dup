@@ -11,9 +11,10 @@ nothing to configure.
 
 - **Browse Backup** — list snapshots, drill into the file tree, preview a file, and restore
   individual files or folders (to their original location or anywhere you choose).
-- **Search Backup Files** — find files by name or path across every snapshot.
-- **Backup Status** — see the last backup, destination, schedule and included/excluded paths,
-  and trigger a new backup.
+- **Search Backup Files** — build a small local index of your latest backup once, then search it
+  instantly and offline (searching a cloud backup file-by-file is far too slow otherwise).
+- **Back Up Now** — start a fresh backup, and see the last backup, destination, schedule and
+  included/excluded paths.
 
 ## Supported backends
 

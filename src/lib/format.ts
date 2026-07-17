@@ -41,6 +41,19 @@ export function fullDate(iso: string): string {
   return isNaN(d.getTime()) ? iso || "—" : d.toLocaleString();
 }
 
+/** Human duration between two ISO timestamps, e.g. "1h 11m" or "45s". */
+export function duration(startIso?: string, endIso?: string): string | null {
+  if (!startIso || !endIso) return null;
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  if (isNaN(ms) || ms < 0) return null;
+  const secs = Math.round(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ${secs % 60}s`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ${mins % 60}m`;
+}
+
 /** Compact, readable date+time for narrow list columns, e.g. "15 Jul, 09:57". */
 export function shortDateTime(iso: string): string {
   const d = new Date(iso);

@@ -26,9 +26,10 @@
     },
     {
       "name": "backup-status",
-      "title": "Backup Status",
+      "title": "Back Up Now",
       "subtitle": "Déjà Dup",
-      "description": "Show backup status and trigger a new backup",
+      "description": "Start a backup and see backup status",
+      "keywords": ["backup", "status", "take backup", "run backup"],
       "mode": "view"
     }
   ],

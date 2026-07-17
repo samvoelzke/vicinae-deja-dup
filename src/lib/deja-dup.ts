@@ -248,9 +248,16 @@ export interface Snapshot {
   username: string;
   paths: string[];
   tags?: string[];
+  program_version?: string;
   summary?: {
     total_files_processed?: number;
     total_bytes_processed?: number;
+    files_new?: number;
+    files_changed?: number;
+    files_unmodified?: number;
+    data_added?: number;
+    backup_start?: string;
+    backup_end?: string;
   };
 }
 
@@ -362,22 +369,145 @@ export async function listDir(
   return nodes;
 }
 
-export interface FindMatch {
+/* ---------------------------------------------------------------------------
+ * Local search index
+ *
+ * `restic find` over a cloud backend re-walks every snapshot's tree and takes
+ * many seconds per query — unusable for interactive search. Instead we walk one
+ * snapshot ONCE (streamed, so a million files never sit in memory), write a compact
+ * index to disk, and search it locally and instantly afterwards.
+ * ------------------------------------------------------------------------- */
+
+export interface IndexEntry {
   path: string;
-  name?: string;
-  type?: string;
-  size?: number;
-  mtime?: string;
+  name: string;
+  type: string;
+  size: number;
 }
 
-export interface FindResult {
-  snapshot: string;
-  matches: FindMatch[];
+export interface IndexMeta {
+  snapshotId: string;
+  shortId: string;
+  count: number;
+  builtAt: number;
 }
 
-export async function findFiles(pattern: string, config?: DejaConfig): Promise<FindResult[]> {
-  const out = await restic(["find", "--json", pattern], config);
-  return JSON.parse(out || "[]") as FindResult[];
+function indexPaths() {
+  const dir = environment.supportPath;
+  return { data: join(dir, "fileindex.tsv"), meta: join(dir, "fileindex.meta.json") };
+}
+
+export async function readIndexMeta(): Promise<IndexMeta | null> {
+  try {
+    return JSON.parse(await readFile(indexPaths().meta, "utf8")) as IndexMeta;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Walk a snapshot recursively and stream every file/dir into a local TSV index.
+ * onProgress is called periodically with the running count.
+ */
+export async function buildFileIndex(
+  snapshot: Snapshot,
+  onProgress: (count: number) => void,
+  config?: DejaConfig,
+): Promise<IndexMeta> {
+  const cfg = config ?? (await readConfig());
+  const { env, base } = await buildEnvAndBase(cfg);
+  const p = prefs();
+  const { data, meta } = indexPaths();
+  await mkdir(environment.supportPath, { recursive: true });
+
+  const { createWriteStream } = await import("node:fs");
+  const { spawn } = await import("node:child_process");
+  const roots = snapshot.paths.length ? snapshot.paths : ["/"];
+
+  let count = 0;
+  const out = createWriteStream(data, { flags: "w" });
+
+  for (const root of roots) {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(
+        p.resticPath,
+        [...base, "ls", snapshot.id, root, "--recursive", "--json"],
+        { env },
+      );
+      let buf = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        buf += chunk;
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let obj: { path?: string; name?: string; type?: string; size?: number; struct_type?: string };
+          try {
+            obj = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (!obj.path || obj.struct_type === "snapshot" || !obj.type) continue;
+          out.write(`${obj.type}\t${obj.size ?? 0}\t${obj.path}\n`);
+          if (++count % 5000 === 0) onProgress(count);
+        }
+      });
+      child.stderr.on("data", (d) => (stderr += d.toString()));
+      child.on("error", reject);
+      child.on("close", (code) => {
+        // Exit 3 = some files unreadable; index is still valid.
+        if (code === 0 || code === 3) resolve();
+        else reject(new Error(humanExit(code, stderr)));
+      });
+    });
+  }
+
+  await new Promise<void>((resolve) => out.end(resolve));
+  const info: IndexMeta = {
+    snapshotId: snapshot.id,
+    shortId: snapshot.short_id,
+    count,
+    builtAt: Date.now(),
+  };
+  await writeFile(meta, JSON.stringify(info));
+  onProgress(count);
+  return info;
+}
+
+/** Load the on-disk index into memory (array of raw TSV lines). */
+export async function loadIndex(): Promise<string[]> {
+  try {
+    const raw = await readFile(indexPaths().data, "utf8");
+    return raw.length ? raw.split("\n") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Filter pre-loaded index lines by a case-insensitive substring, capped for rendering. */
+export function searchIndex(lines: string[], query: string, limit = 200): IndexEntry[] {
+  const q = query.toLowerCase();
+  const out: IndexEntry[] = [];
+  for (const line of lines) {
+    if (!line) continue;
+    // Match against the path portion (after the second tab) case-insensitively.
+    const firstTab = line.indexOf("\t");
+    const secondTab = line.indexOf("\t", firstTab + 1);
+    if (secondTab < 0) continue;
+    const path = line.slice(secondTab + 1);
+    if (!path.toLowerCase().includes(q)) continue;
+    out.push({
+      type: line.slice(0, firstTab),
+      size: Number(line.slice(firstTab + 1, secondTab)) || 0,
+      path,
+      name: path.slice(path.lastIndexOf("/") + 1),
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 /** Dump a single file's contents from a snapshot to a local path (for preview). */
