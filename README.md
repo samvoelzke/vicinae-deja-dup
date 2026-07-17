@@ -18,15 +18,30 @@ nothing to configure.
 
 ## Supported backends
 
-| Backend | Status |
-| --- | --- |
-| Local folder | ✅ |
-| Google Drive | ✅ |
-| rclone remote | ✅ |
-| OneDrive / other | not yet |
+| Backend | Status | Notes |
+| --- | --- | --- |
+| Local folder | ✅ | |
+| Removable drive | ✅ | drive must be connected/mounted |
+| Network server | ✅ | SMB, SFTP, WebDAV/Nextcloud — mount it once in Files first |
+| Google Drive | ✅ | |
+| OneDrive (Personal) | ✅ | |
+| rclone remote | ✅ | uses your `rclone.conf` |
 
 Backups made with **duplicity** or **borg** (older Déjà Dup, or an explicit choice) are not
 readable by this extension — only restic backups are.
+
+## Installation flavor (native / Flatpak / Snap)
+
+The extension auto-detects how Déjà Dup is installed and adapts:
+
+- **Native** (system package) and **Snap** (classic confinement) — full support, all backends.
+- **Flatpak** — Déjà Dup's config and passwords live in the app's sandbox, unreachable from
+  outside. Local, network and drive backups work if you enter your backup password under
+  **Backup Password** in the extension settings; cloud backups (Drive/OneDrive/rclone) keep their
+  tokens in the sandboxed keyring and need the native or Snap Déjà Dup.
+
+You can override the detected flavor and set custom binary paths / the backup password under the
+extension's preferences (⌘/Ctrl+,) if your setup is unusual.
 
 ## Requirements
 

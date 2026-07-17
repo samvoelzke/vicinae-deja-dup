@@ -43,6 +43,28 @@
   ],
   "preferences": [
     {
+      "name": "dejaDupFlavor",
+      "title": "Déjà Dup Installation",
+      "description": "How Déjà Dup is installed. Auto-detects by default; override if detection is wrong or you use a custom setup.",
+      "type": "dropdown",
+      "required": false,
+      "default": "auto",
+      "data": [
+        { "title": "Auto-detect", "value": "auto" },
+        { "title": "Native (system package)", "value": "native" },
+        { "title": "Flatpak", "value": "flatpak" },
+        { "title": "Snap", "value": "snap" }
+      ]
+    },
+    {
+      "name": "backupPassword",
+      "title": "Backup Password",
+      "description": "Leave empty to read it from the keyring automatically. Set it only if the extension cannot find it (e.g. a Flatpak install, or a custom keyring).",
+      "type": "password",
+      "required": false,
+      "default": ""
+    },
+    {
       "name": "autoIndex",
       "title": "Automatic Indexing",
       "label": "Keep the latest backup indexed in the background",
@@ -54,7 +76,7 @@
     {
       "name": "resticPath",
       "title": "restic Binary",
-      "description": "Path to the restic executable (leave as 'restic' to use PATH)",
+      "description": "Path to the restic executable (leave as 'restic' to use PATH). Ignored for Flatpak installs, which use their bundled restic.",
       "type": "textfield",
       "required": false,
       "default": "restic"
