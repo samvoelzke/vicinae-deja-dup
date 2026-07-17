@@ -5,7 +5,7 @@ import { BackupStatus, RepoStats, readStatus, repoStats } from "./lib/deja-dup";
 import { formatBytes, fullDate, relativeTime } from "./lib/format";
 import { launchDejaDup } from "./browse-backup";
 
-export default function BackUpNow() {
+export default function BackupStatusView() {
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [stats, setStats] = useState<RepoStats | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -22,14 +22,12 @@ export default function BackUpNow() {
   const M = Detail.Metadata;
 
   const markdown = error
-    ? `# Back Up Now\n\n${error}`
+    ? `# Backup Status\n\n${error}`
     : status
       ? [
           "# Déjà Dup",
           "",
           `Last backup **${relativeTime(status.lastBackup)}**.`,
-          "",
-          "Press **Back Up Now** below to start a fresh backup.",
         ].join("\n")
       : "# Déjà Dup\n\nLoading status…";
 

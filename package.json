@@ -25,11 +25,19 @@
       "mode": "view"
     },
     {
-      "name": "backup-status",
+      "name": "backup-now",
       "title": "Back Up Now",
       "subtitle": "Déjà Dup",
-      "description": "Start a backup and see backup status",
-      "keywords": ["backup", "status", "take backup", "run backup"],
+      "description": "Start a backup immediately",
+      "keywords": ["backup", "take backup", "run backup"],
+      "mode": "no-view"
+    },
+    {
+      "name": "backup-status",
+      "title": "Backup Status",
+      "subtitle": "Déjà Dup",
+      "description": "See the last backup, destination, schedule and included paths",
+      "keywords": ["backup", "status"],
       "mode": "view"
     },
     {
