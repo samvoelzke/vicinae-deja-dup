@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react";
-import { Action, ActionPanel, Icon, List } from "@vicinae/api";
-import {
-  DejaConfig,
-  FindResult,
-  findFiles,
-  formatBytes,
-  readConfig,
-} from "./lib/deja-dup";
+import { Action, ActionPanel, Color, Icon, List } from "@vicinae/api";
+import { DejaConfig, FindResult, findFiles, readConfig } from "./lib/deja-dup";
+import { formatBytes } from "./lib/format";
 import { ErrorView } from "./browse-backup";
 
 export default function SearchFiles() {
@@ -73,7 +68,11 @@ export default function SearchFiles() {
           key={`${snapshot}-${match.path}-${i}`}
           title={match.name || match.path.split("/").pop() || match.path}
           subtitle={match.path}
-          icon={match.type === "dir" ? Icon.Folder : Icon.Document}
+          icon={
+            match.type === "dir"
+              ? { source: Icon.Folder, tintColor: Color.Blue }
+              : { source: Icon.BlankDocument, tintColor: Color.SecondaryText }
+          }
           accessories={[
             ...(match.size != null ? [{ text: formatBytes(match.size) }] : []),
             { tag: snapshot.slice(0, 8) },

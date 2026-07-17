@@ -1,13 +1,8 @@
 import { useEffect, useState } from "react";
 import { Action, ActionPanel, Detail, Icon, Toast, showToast } from "@vicinae/api";
 import { execFile } from "node:child_process";
-import {
-  BackupStatus,
-  RepoStats,
-  formatBytes,
-  readStatus,
-  repoStats,
-} from "./lib/deja-dup";
+import { BackupStatus, RepoStats, readStatus, repoStats } from "./lib/deja-dup";
+import { formatBytes } from "./lib/format";
 import { launchDejaDup } from "./browse-backup";
 
 export default function BackupStatusCommand() {
@@ -33,12 +28,11 @@ export default function BackupStatusCommand() {
 
   return (
     <Detail
-      isLoading={!status && !error}
       markdown={md}
       actions={
         <ActionPanel>
           <Action title="Back Up Now" icon={Icon.Upload} onAction={backupNow} />
-          <Action title="Open Déjà Dup" icon={Icon.Gear} onAction={launchDejaDup} />
+          <Action title="Open Déjà Dup" icon={Icon.Cog} onAction={launchDejaDup} />
         </ActionPanel>
       }
     />
