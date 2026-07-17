@@ -40,3 +40,12 @@ export function fullDate(iso: string): string {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso || "—" : d.toLocaleString();
 }
+
+/** Compact, readable date+time for narrow list columns, e.g. "15 Jul, 09:57". */
+export function shortDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso || "—";
+  const date = d.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return `${date}, ${time}`;
+}

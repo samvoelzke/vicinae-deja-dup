@@ -27,7 +27,7 @@ import {
   restorePath,
 } from "./lib/deja-dup";
 import { useCached } from "./lib/cache";
-import { formatBytes, fullDate, recencyBucket, relativeTime } from "./lib/format";
+import { formatBytes, fullDate, recencyBucket, relativeTime, shortDateTime } from "./lib/format";
 
 const BUCKET_ORDER = ["Today", "This Week", "This Month", "This Year", "Older"];
 
@@ -74,13 +74,10 @@ export default function BrowseBackup() {
 }
 
 function SnapshotItem({ snapshot: s, config }: { snapshot: Snapshot; config: DejaConfig | null }) {
-  const size = s.summary?.total_bytes_processed;
   return (
     <List.Item
-      title={relativeTime(s.time)}
-      subtitle={s.short_id}
+      title={shortDateTime(s.time)}
       icon={{ source: Icon.Clock, tintColor: Color.Blue }}
-      accessories={size ? [{ tag: formatBytes(size) }] : []}
       detail={<SnapshotDetail snapshot={s} />}
       actions={
         config ? (
