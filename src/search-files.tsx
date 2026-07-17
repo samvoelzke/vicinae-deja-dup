@@ -11,6 +11,7 @@ import {
   dumpFile,
   listSnapshots,
   loadIndex,
+  pruneOrphanIndexes,
   readConfig,
   readIndexMeta,
   restorePath,
@@ -40,6 +41,7 @@ export default function SearchFiles() {
       setConfig(cfg);
       const newest = snaps[0] ?? null;
       setLatest(newest);
+      pruneOrphanIndexes(snaps.map((s) => s.short_id));
       const m = newest ? await readIndexMeta(newest.short_id) : null;
       setMeta(m);
       if (m && newest) {

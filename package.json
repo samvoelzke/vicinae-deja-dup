@@ -31,9 +31,26 @@
       "description": "Start a backup and see backup status",
       "keywords": ["backup", "status", "take backup", "run backup"],
       "mode": "view"
+    },
+    {
+      "name": "index-latest",
+      "title": "Refresh Search Index",
+      "subtitle": "Déjà Dup",
+      "description": "Keep the latest backup indexed for instant browsing and search",
+      "mode": "no-view",
+      "interval": "6h"
     }
   ],
   "preferences": [
+    {
+      "name": "autoIndex",
+      "title": "Automatic Indexing",
+      "label": "Keep the latest backup indexed in the background",
+      "description": "When on, a new backup is indexed automatically (~80 MB of metadata over the network) so the first browse/search is instant. When off, you build the index on demand.",
+      "type": "checkbox",
+      "required": false,
+      "default": false
+    },
     {
       "name": "resticPath",
       "title": "restic Binary",

@@ -27,6 +27,7 @@ import {
   listDirFromLines,
   listSnapshots,
   loadIndex,
+  pruneOrphanIndexes,
   readConfig,
   restorePath,
 } from "./lib/deja-dup";
@@ -45,6 +46,10 @@ const BUCKET_ORDER = ["Today", "This Week", "This Month", "This Year", "Older"];
 export default function BrowseBackup() {
   const cfg = useCached<DejaConfig>("config", readConfig);
   const snaps = useCached<Snapshot[]>("snapshots", listSnapshots);
+
+  useEffect(() => {
+    if (snaps.data) pruneOrphanIndexes(snaps.data.map((s) => s.short_id));
+  }, [snaps.data]);
 
   const error = cfg.error || snaps.error;
   if (error && !snaps.data) return <ErrorView message={error} />;

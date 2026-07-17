@@ -6,7 +6,10 @@
  */
 
 type ExtensionPreferences = {
-  /** restic Binary - Path to the restic executable (leave as 'restic' to use PATH) */
+  /** Automatic Indexing - When on, a new backup is indexed automatically (~80 MB of metadata over the network) so the first browse/search is instant. When off, you build the index on demand. */
+	"autoIndex": boolean;
+
+	/** restic Binary - Path to the restic executable (leave as 'restic' to use PATH) */
 	"resticPath": string;
 
 	/** rclone Binary - Path to the rclone executable (leave as 'rclone' to use PATH) */
@@ -33,6 +36,11 @@ declare namespace Preferences {
 	export type BackupStatus = ExtensionPreferences & {
 		
 	}
+
+	/** Command: Refresh Search Index */
+	export type IndexLatest = ExtensionPreferences & {
+		
+	}
 }
 
 declare namespace Arguments {
@@ -48,6 +56,11 @@ declare namespace Arguments {
 
 	/** Command: Back Up Now */
 	export type BackupStatus = {
+		
+	}
+
+	/** Command: Refresh Search Index */
+	export type IndexLatest = {
 		
 	}
 }

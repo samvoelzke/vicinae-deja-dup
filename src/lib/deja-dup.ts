@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { environment, getPreferenceValues } from "@vicinae/api";
@@ -16,6 +16,11 @@ export interface Preferences {
   resticPath: string;
   rclonePath: string;
   cacheDir: string;
+  autoIndex?: boolean;
+}
+
+export function autoIndexEnabled(): boolean {
+  return getPreferenceValues<Preferences>().autoIndex === true;
 }
 
 export function prefs(): Preferences {
@@ -410,6 +415,24 @@ export async function readIndexMeta(shortId: string): Promise<IndexMeta | null> 
 
 export async function hasIndex(shortId: string): Promise<boolean> {
   return (await readIndexMeta(shortId)) !== null;
+}
+
+/**
+ * Delete index files for snapshots that no longer exist in the repository (e.g. pruned by
+ * Déjà Dup's retention). A new backup keeps its own new index; only orphaned ones are removed.
+ */
+export async function pruneOrphanIndexes(validShortIds: string[]): Promise<void> {
+  const keep = new Set(validShortIds);
+  try {
+    for (const f of await readdir(environment.supportPath)) {
+      const m = f.match(/^index-(.+)\.(tsv|meta\.json)$/);
+      if (m && !keep.has(m[1])) {
+        await unlink(join(environment.supportPath, f)).catch(() => undefined);
+      }
+    }
+  } catch {
+    // support dir may not exist yet — nothing to prune
+  }
 }
 
 /**
