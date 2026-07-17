@@ -46,7 +46,7 @@
       "name": "autoIndex",
       "title": "Automatic Indexing",
       "label": "Keep the latest backup indexed in the background",
-      "description": "When on, a new backup is indexed automatically (~80 MB of metadata over the network) so the first browse/search is instant. When off, you build the index on demand.",
+      "description": "When on, a new backup is indexed automatically in the background (downloads the file listing metadata over the network — scales with file count) so the first browse/search is instant. When off, you build the index on demand.",
       "type": "checkbox",
       "required": false,
       "default": false

@@ -6,7 +6,7 @@
  */
 
 type ExtensionPreferences = {
-  /** Automatic Indexing - When on, a new backup is indexed automatically (~80 MB of metadata over the network) so the first browse/search is instant. When off, you build the index on demand. */
+  /** Automatic Indexing - When on, a new backup is indexed automatically in the background (downloads the file listing metadata over the network — scales with file count) so the first browse/search is instant. When off, you build the index on demand. */
 	"autoIndex": boolean;
 
 	/** restic Binary - Path to the restic executable (leave as 'restic' to use PATH) */

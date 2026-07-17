@@ -9,7 +9,8 @@ import {
 /**
  * Background command (runs on an interval). Always cleans up orphaned indexes, and — when
  * "Automatic Indexing" is enabled — builds the index for the latest snapshot ahead of time,
- * so the first Browse/Search after a new backup is instant instead of downloading ~80 MB then.
+ * so the first Browse/Search after a new backup is instant instead of downloading the file
+ * listing on demand (metadata scales with file count — e.g. ~170 MB for ~1.3M files).
  */
 export default async function IndexLatest() {
   try {
