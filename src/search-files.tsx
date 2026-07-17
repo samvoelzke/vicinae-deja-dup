@@ -36,13 +36,14 @@ export default function SearchFiles() {
   async function init() {
     setPhase("loading");
     try {
-      const [cfg, snaps, m] = await Promise.all([readConfig(), listSnapshots(), readIndexMeta()]);
+      const [cfg, snaps] = await Promise.all([readConfig(), listSnapshots()]);
       setConfig(cfg);
       const newest = snaps[0] ?? null;
       setLatest(newest);
+      const m = newest ? await readIndexMeta(newest.short_id) : null;
       setMeta(m);
-      if (m && newest && m.snapshotId === newest.id) {
-        indexRef.current = await loadIndex();
+      if (m && newest) {
+        indexRef.current = await loadIndex(newest.short_id);
         setPhase("ready");
       } else {
         setPhase("needs-index");
@@ -67,7 +68,7 @@ export default function SearchFiles() {
         setProgress(c);
         toast.message = `${c.toLocaleString()} files`;
       }, config ?? undefined);
-      indexRef.current = await loadIndex();
+      indexRef.current = await loadIndex(latest.short_id);
       setMeta(info);
       toast.style = Toast.Style.Success;
       toast.title = "Index ready";

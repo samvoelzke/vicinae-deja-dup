@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Action,
   ActionPanel,
@@ -18,11 +18,15 @@ import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import {
   DejaConfig,
-  ResticNode,
+  IndexEntry,
   Snapshot,
+  buildFileIndex,
   dumpFile,
+  hasIndex,
   listDir,
+  listDirFromLines,
   listSnapshots,
+  loadIndex,
   readConfig,
   restorePath,
 } from "./lib/deja-dup";
@@ -92,13 +96,7 @@ function SnapshotItem({ snapshot: s, config }: { snapshot: Snapshot; config: Dej
             <Action.Push
               title="Browse Files"
               icon={Icon.Folder}
-              target={
-                <FileBrowser
-                  config={config}
-                  snapshot={s}
-                  path={s.paths.length === 1 ? s.paths[0] : "/"}
-                />
-              }
+              target={<BrowseGate config={config} snapshot={s} />}
             />
             <Action.CopyToClipboard title="Copy Snapshot ID" content={s.id} />
           </ActionPanel>
@@ -159,18 +157,130 @@ function SnapshotDetail({ snapshot: s }: { snapshot: Snapshot }) {
   );
 }
 
+interface BrowseNode {
+  name: string;
+  type: string;
+  path: string;
+  size?: number;
+  mtime?: string;
+}
+
+type LoadFn = (path: string) => Promise<BrowseNode[]>;
+
+function toBrowseNodes(entries: BrowseNode[]): BrowseNode[] {
+  return entries.map((e) => ({
+    name: e.name,
+    type: e.type,
+    path: e.path,
+    size: e.size,
+    mtime: e.mtime,
+  }));
+}
+
+/**
+ * Decides how to browse a snapshot: from a local index (instant) if one exists, otherwise
+ * offers to build it once (making both browsing AND search instant) or to browse live via
+ * restic (correct but several seconds per folder on a cloud backend).
+ */
+function BrowseGate({ config, snapshot }: { config: DejaConfig; snapshot: Snapshot }) {
+  const rootPath = snapshot.paths.length === 1 ? snapshot.paths[0] : "/";
+  const [mode, setMode] = useState<"checking" | "choose" | "building" | "index" | "live">(
+    "checking",
+  );
+  const [progress, setProgress] = useState(0);
+  const linesRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      if (await hasIndex(snapshot.short_id)) {
+        linesRef.current = await loadIndex(snapshot.short_id);
+        setMode("index");
+      } else {
+        setMode("choose");
+      }
+    })();
+  }, []);
+
+  async function build() {
+    setMode("building");
+    setProgress(0);
+    const toast = await showToast({ style: Toast.Style.Animated, title: "Building index…" });
+    try {
+      await buildFileIndex(
+        snapshot,
+        (c) => {
+          setProgress(c);
+          toast.message = `${c.toLocaleString()} files`;
+        },
+        config,
+      );
+      linesRef.current = await loadIndex(snapshot.short_id);
+      toast.style = Toast.Style.Success;
+      toast.title = "Instant browsing ready";
+      setMode("index");
+    } catch (e) {
+      toast.style = Toast.Style.Failure;
+      toast.title = "Index build failed";
+      toast.message = e instanceof Error ? e.message : String(e);
+      setMode("choose");
+    }
+  }
+
+  if (mode === "checking" || mode === "building") {
+    const md =
+      mode === "building"
+        ? `# Building index…\n\nIndexed **${progress.toLocaleString()}** files.\n\nThis reads the snapshot once so browsing and search become instant. It can take up to a minute on a cloud backup.`
+        : "# Loading…";
+    return <Detail markdown={md} />;
+  }
+
+  if (mode === "choose") {
+    return (
+      <Detail
+        navigationTitle={snapshot.short_id}
+        markdown={[
+          "# Browse this snapshot",
+          "",
+          "Reading a cloud backup folder-by-folder takes several seconds each time. Build a small",
+          "local index of this snapshot **once** and browsing (and search) become instant and offline.",
+          "",
+          `Snapshot **${snapshot.short_id}** · ${snapshot.paths.join(", ")}`,
+        ].join("\n")}
+        actions={
+          <ActionPanel>
+            <Action title="Enable Instant Browsing (build Index)" icon={Icon.MagnifyingGlass} onAction={build} />
+            <Action title="Browse Now (slower)" icon={Icon.Folder} onAction={() => setMode("live")} />
+            <Action title="Open Déjà Dup" icon={Icon.Cog} onAction={launchDejaDup} />
+          </ActionPanel>
+        }
+      />
+    );
+  }
+
+  const load: LoadFn =
+    mode === "index"
+      ? (p) => Promise.resolve(toBrowseNodes(listDirFromLines(linesRef.current, p)))
+      : (p) => listDir(snapshot.id, p, config).then(toBrowseNodes);
+
+  return <FileBrowser load={load} mode={mode} config={config} snapshot={snapshot} path={rootPath} />;
+}
+
 function FileBrowser({
+  load,
+  mode,
   config,
   snapshot,
   path,
 }: {
+  load: LoadFn;
+  mode: string;
   config: DejaConfig;
   snapshot: Snapshot;
   path: string;
 }) {
-  const key = `ls:${snapshot.id}:${path}`;
-  const { data, isLoading, isFirstLoad, error } = useCached<ResticNode[]>(key, () =>
-    listDir(snapshot.id, path, config),
+  const { data, isLoading, isFirstLoad, error } = useCached<BrowseNode[]>(
+    `browse:${mode}:${snapshot.id}:${path}`,
+    () => load(path),
   );
   const nodes = data ?? [];
 
@@ -182,18 +292,15 @@ function FileBrowser({
 
   return (
     <List isLoading={isLoading} navigationTitle={title} searchBarPlaceholder="Filter files…">
-      <List.EmptyView
-        title={isFirstLoad ? "Loading…" : "Empty directory"}
-        icon={Icon.Folder}
-      />
+      <List.EmptyView title={isFirstLoad ? "Loading…" : "Empty directory"} icon={Icon.Folder} />
       <List.Section title="Folders" subtitle={dirs.length ? `${dirs.length}` : undefined}>
         {dirs.map((n) => (
-          <FileItem key={n.path} node={n} config={config} snapshot={snapshot} />
+          <FileItem key={n.path} node={n} load={load} mode={mode} config={config} snapshot={snapshot} />
         ))}
       </List.Section>
       <List.Section title="Files" subtitle={files.length ? `${files.length}` : undefined}>
         {files.map((n) => (
-          <FileItem key={n.path} node={n} config={config} snapshot={snapshot} />
+          <FileItem key={n.path} node={n} load={load} mode={mode} config={config} snapshot={snapshot} />
         ))}
       </List.Section>
     </List>
@@ -202,10 +309,14 @@ function FileBrowser({
 
 function FileItem({
   node,
+  load,
+  mode,
   config,
   snapshot,
 }: {
-  node: ResticNode;
+  node: BrowseNode;
+  load: LoadFn;
+  mode: string;
   config: DejaConfig;
   snapshot: Snapshot;
 }) {
@@ -226,19 +337,25 @@ function FileItem({
               { tag: formatBytes(node.size) },
             ]
       }
-      actions={<FileActions config={config} snapshot={snapshot} node={node} />}
+      actions={
+        <FileActions node={node} load={load} mode={mode} config={config} snapshot={snapshot} />
+      }
     />
   );
 }
 
 function FileActions({
+  node,
+  load,
+  mode,
   config,
   snapshot,
-  node,
 }: {
+  node: BrowseNode;
+  load: LoadFn;
+  mode: string;
   config: DejaConfig;
   snapshot: Snapshot;
-  node: ResticNode;
 }) {
   if (node.type === "dir") {
     return (
@@ -246,7 +363,9 @@ function FileActions({
         <Action.Push
           title="Open Folder"
           icon={Icon.Folder}
-          target={<FileBrowser config={config} snapshot={snapshot} path={node.path} />}
+          target={
+            <FileBrowser load={load} mode={mode} config={config} snapshot={snapshot} path={node.path} />
+          }
         />
         <RestoreActions config={config} snapshot={snapshot} node={node} />
       </ActionPanel>
@@ -268,7 +387,7 @@ function RestoreActions({
 }: {
   config: DejaConfig;
   snapshot: Snapshot;
-  node: ResticNode;
+  node: BrowseNode;
 }) {
   return (
     <>
@@ -293,7 +412,7 @@ function RestoreForm({
 }: {
   config: DejaConfig;
   snapshot: Snapshot;
-  node: ResticNode;
+  node: BrowseNode;
 }) {
   const { pop } = useNavigation();
   const [target, setTarget] = useState(join(process.env.HOME || "/tmp", "Restored"));
@@ -326,7 +445,7 @@ function RestoreForm({
   );
 }
 
-async function previewFile(config: DejaConfig, snapshot: Snapshot, node: ResticNode) {
+async function previewFile(config: DejaConfig, snapshot: Snapshot, node: BrowseNode) {
   const toast = await showToast({ style: Toast.Style.Animated, title: `Fetching ${node.name}…` });
   try {
     const dest = join(environment.supportPath || tmpdir(), `preview-${basename(node.path)}`);

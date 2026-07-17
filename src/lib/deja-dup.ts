@@ -392,17 +392,24 @@ export interface IndexMeta {
   builtAt: number;
 }
 
-function indexPaths() {
+function indexPaths(shortId: string) {
   const dir = environment.supportPath;
-  return { data: join(dir, "fileindex.tsv"), meta: join(dir, "fileindex.meta.json") };
+  return {
+    data: join(dir, `index-${shortId}.tsv`),
+    meta: join(dir, `index-${shortId}.meta.json`),
+  };
 }
 
-export async function readIndexMeta(): Promise<IndexMeta | null> {
+export async function readIndexMeta(shortId: string): Promise<IndexMeta | null> {
   try {
-    return JSON.parse(await readFile(indexPaths().meta, "utf8")) as IndexMeta;
+    return JSON.parse(await readFile(indexPaths(shortId).meta, "utf8")) as IndexMeta;
   } catch {
     return null;
   }
+}
+
+export async function hasIndex(shortId: string): Promise<boolean> {
+  return (await readIndexMeta(shortId)) !== null;
 }
 
 /**
@@ -417,7 +424,7 @@ export async function buildFileIndex(
   const cfg = config ?? (await readConfig());
   const { env, base } = await buildEnvAndBase(cfg);
   const p = prefs();
-  const { data, meta } = indexPaths();
+  const { data, meta } = indexPaths(snapshot.short_id);
   await mkdir(environment.supportPath, { recursive: true });
 
   const { createWriteStream } = await import("node:fs");
@@ -478,13 +485,39 @@ export async function buildFileIndex(
 }
 
 /** Load the on-disk index into memory (array of raw TSV lines). */
-export async function loadIndex(): Promise<string[]> {
+export async function loadIndex(shortId: string): Promise<string[]> {
   try {
-    const raw = await readFile(indexPaths().data, "utf8");
+    const raw = await readFile(indexPaths(shortId).data, "utf8");
     return raw.length ? raw.split("\n") : [];
   } catch {
     return [];
   }
+}
+
+/** Direct children of `path` from a loaded index — the local, instant equivalent of listDir. */
+export function listDirFromLines(lines: string[], path: string): IndexEntry[] {
+  const wanted = path === "/" || path === "" ? "" : path.replace(/\/$/, "");
+  const out: IndexEntry[] = [];
+  for (const line of lines) {
+    if (!line) continue;
+    const firstTab = line.indexOf("\t");
+    const secondTab = line.indexOf("\t", firstTab + 1);
+    if (secondTab < 0) continue;
+    const p = line.slice(secondTab + 1);
+    const parent = p.slice(0, p.lastIndexOf("/")) || "";
+    if (parent !== wanted) continue;
+    out.push({
+      type: line.slice(0, firstTab),
+      size: Number(line.slice(firstTab + 1, secondTab)) || 0,
+      path: p,
+      name: p.slice(p.lastIndexOf("/") + 1),
+    });
+  }
+  out.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return out;
 }
 
 /** Filter pre-loaded index lines by a case-insensitive substring, capped for rendering. */
